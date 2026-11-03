@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { VendorRegisterDto } from './dto/vendor-register.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Injectable()
 export class AuthService {
@@ -14,11 +15,13 @@ export class AuthService {
 
   ) {}
 
+  // register
+
   async registerVendor(dto: VendorRegisterDto) {
-    // Step 1: Clean the email
+
     const email = dto.email.trim().toLowerCase();
 
-    // Step 2: Check if the email already exists
+    //  Check if the email already exists
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
     });
@@ -27,10 +30,10 @@ export class AuthService {
       throw new ConflictException('Email already registered');
     }
 
-    // Step 3: Hash the password
+    //  Hash the password
     const hashedPassword = await bcrypt.hash(dto.password, 12);
 
-    // Step 4: Create user and vendor
+    //  Create user and vendor
     try {
       const user = await this.prisma.user.create({
         data: {
@@ -73,7 +76,7 @@ export class AuthService {
         },
       });
 
-      // Step 5: Return success response
+      //  Return success response
       return {
         message: 'Vendor registered successfully',
         user,
@@ -202,5 +205,114 @@ export class AuthService {
   };
 }
 
+
+  // refrest token
+  async refreshVendorToken(dto: RefreshTokenDto) {
+  // Verify the refresh token
+  let payload: {
+    sub: string;
+    email: string;
+    role: string;
+  };
+
+  try {
+    payload = await this.jwtService.verifyAsync(dto.refreshToken, {
+      secret: process.env.JWT_REFRESH_SECRET,
+    });
+  } catch {
+    throw new UnauthorizedException('Invalid or expired refresh token');
+  }
+
+  // Find the user in the database
+  const user = await this.prisma.user.findUnique({
+    where: {
+      id: payload.sub,
+    },
+    include: {
+      vendor: true,
+    },
+  });
+
+  if (!user) {
+    throw new UnauthorizedException('User not found');
+  }
+
+  //  Check account role and status
+  if (user.role !== 'VENDOR') {
+    throw new UnauthorizedException('Invalid vendor account');
+  }
+
+  if (!user.isActive || !user.vendor || user.vendor.status !== 'ACTIVE') {
+    throw new UnauthorizedException('Vendor account is not active');
+  }
+
+  // Check whether a refresh token exists in the database
+  if (!user.refreshTokenHash) {
+    throw new UnauthorizedException('Please log in again');
+  }
+
+  //  Compare the received refresh token with its stored hash
+  const isRefreshTokenValid = await bcrypt.compare(
+    dto.refreshToken,
+    user.refreshTokenHash,
+  );
+
+  if (!isRefreshTokenValid) {
+    throw new UnauthorizedException('Invalid refresh token');
+  }
+
+  //  Create a new JWT payload
+  const newPayload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+  };
+
+  //  Generate a new access token
+  const accessToken = await this.jwtService.signAsync(newPayload, {
+    secret: process.env.JWT_ACCESS_SECRET,
+    expiresIn: '15m',
+  });
+
+  //  Generate a new refresh token
+  const refreshToken = await this.jwtService.signAsync(newPayload, {
+    secret: process.env.JWT_REFRESH_SECRET,
+    expiresIn: '7d',
+  });
+
+  // Hash the new refresh token
+  const newRefreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+  //  Replace the old refresh token hash
+  await this.prisma.user.update({
+    where: {
+      id: user.id,
+    },
+    data: {
+      refreshTokenHash: newRefreshTokenHash,
+    },
+  });
+
+  //  Return the new tokens
+  return {
+    message: 'Access token refreshed successfully',
+
+    accessToken,
+    refreshToken,
+
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+
+      vendor: {
+        id: user.vendor.id,
+        businessName: user.vendor.businessName,
+        status: user.vendor.status,
+      },
+    },
+  };
+}
 
 }
