@@ -1,13 +1,18 @@
 
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-
+import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { VendorRegisterDto } from './dto/vendor-register.dto';
+import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService,
+
+  ) {}
 
   async registerVendor(dto: VendorRegisterDto) {
     // Step 1: Clean the email
@@ -88,4 +93,114 @@ export class AuthService {
       throw error;
     }
   }
+
+
+
+  // login
+  async vendorLogin(loginDto: LoginDto) {
+  //  Find user using email
+  const email = loginDto.email.trim().toLowerCase();
+
+  const user = await this.prisma.user.findUnique({
+    where: {
+      email,
+    },
+    include: {
+      vendor: true,
+    },
+  });
+
+  //  Check whether user exists
+  if (!user) {
+    throw new UnauthorizedException('Invalid email or password');
+  }
+
+  // Compare submitted password with stored password hash
+  const isPasswordValid = await bcrypt.compare(
+    loginDto.password,
+    user.passwordHash,
+  );
+
+  if (!isPasswordValid) {
+    throw new UnauthorizedException('Invalid email or password');
+  }
+
+  // Check account role
+  if (user.role !== 'VENDOR') {
+    throw new ForbiddenException(
+      'This login is only for vendor accounts',
+    );
+  }
+
+  // Check whether account is active
+  if (!user.isActive) {
+    throw new ForbiddenException('Your account is inactive');
+  }
+
+  // Check whether vendor profile exists
+  if (!user.vendor) {
+    throw new ForbiddenException('Vendor profile not found');
+  }
+
+  // Check vendor approval status
+  if (user.vendor.status !== 'ACTIVE') {
+    throw new ForbiddenException(
+      `Your vendor account is ${user.vendor.status}. Please contact Mero Event admin.`,
+    );
+  }
+
+  //  Create JWT payload
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+  };
+
+  //  Generate access token
+  const accessToken = await this.jwtService.signAsync(payload, {
+    secret: process.env.JWT_ACCESS_SECRET,
+    expiresIn: '15m',
+  });
+
+  // 1 Generate refresh token
+  const refreshToken = await this.jwtService.signAsync(payload, {
+    secret: process.env.JWT_REFRESH_SECRET,
+    expiresIn: '7d',
+  });
+
+  //  Hash refresh token before storing it
+  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+  await this.prisma.user.update({
+    where: {
+      id: user.id,
+    },
+    data: {
+      refreshTokenHash,
+    },
+  });
+
+  //  Return login response
+  return {
+    message: 'Vendor logged in successfully',
+
+    accessToken,
+    refreshToken,
+
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+
+      vendor: {
+        id: user.vendor.id,
+        businessName: user.vendor.businessName,
+        status: user.vendor.status,
+      },
+    },
+  };
+}
+
+
 }
