@@ -9,6 +9,7 @@ import {
 
 import { AuthService } from './auth.service';
 import { VendorRegisterDto } from './dto/vendor-register.dto';
+import { LoginDto } from './dto/login.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -20,5 +21,14 @@ export class AuthController {
     @Body() dto: VendorRegisterDto
     ) {
     return this.authService.registerVendor(dto);
-  }
 }
+
+@Post('vendor/login')
+  @HttpCode(HttpStatus.OK)
+  async vendorLogin(@Body() loginDto: LoginDto) {
+    return this.authService.vendorLogin(loginDto);
+  }
+
+}
+
+
