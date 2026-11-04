@@ -315,4 +315,64 @@ export class AuthService {
   };
 }
 
+
+  //Logout
+  async vendorLogout(dto: RefreshTokenDto) {
+  // 1. Verify refresh token signature
+  let payload: {
+    sub: string;
+    email: string;
+    role: string;
+  };
+
+  try {
+    payload = await this.jwtService.verifyAsync(dto.refreshToken, {
+      secret: process.env.JWT_REFRESH_SECRET,
+      ignoreExpiration: true,
+    });
+  } catch {
+    throw new UnauthorizedException('Invalid refresh token');
+  }
+
+  // 2. Find the user
+  const user = await this.prisma.user.findUnique({
+    where: {
+      id: payload.sub,
+    },
+  });
+
+  if (!user || user.role !== 'VENDOR') {
+    throw new UnauthorizedException('Invalid vendor session');
+  }
+
+  // 3. Check whether a refresh token is stored
+  if (!user.refreshTokenHash) {
+    throw new UnauthorizedException('You are already logged out');
+  }
+
+  // 4. Compare the received token with the stored hash
+  const isTokenValid = await bcrypt.compare(
+    dto.refreshToken,
+    user.refreshTokenHash,
+  );
+
+  if (!isTokenValid) {
+    throw new UnauthorizedException('Invalid refresh token');
+  }
+
+  // 5. Remove the refresh token hash
+  await this.prisma.user.update({
+    where: {
+      id: user.id,
+    },
+    data: {
+      refreshTokenHash: null,
+    },
+  });
+
+  return {
+    message: 'Vendor logged out successfully',
+  };
+}
+
 }

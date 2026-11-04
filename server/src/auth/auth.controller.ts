@@ -45,6 +45,16 @@ export class AuthController {
   }
 
 
+  //Logout
+  @Post('vendor/logout')
+  @HttpCode(HttpStatus.OK)
+  async vendorLogout(
+  @Body() refreshTokenDto: RefreshTokenDto,
+  ) {
+  return this.authService.vendorLogout(refreshTokenDto);
+  }
+
+
 }
 
 
