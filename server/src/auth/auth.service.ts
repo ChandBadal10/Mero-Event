@@ -317,7 +317,7 @@ export class AuthService {
 
   //Logout
   async vendorLogout(dto: RefreshTokenDto) {
-  // 1. Verify refresh token signature
+  // Verify refresh token signature
   let payload: {
     sub: string;
     email: string;
@@ -333,7 +333,7 @@ export class AuthService {
     throw new UnauthorizedException('Invalid refresh token');
   }
 
-  // 2. Find the user
+  //  Find the user
   const user = await this.prisma.user.findUnique({
     where: {
       id: payload.sub,
@@ -344,12 +344,12 @@ export class AuthService {
     throw new UnauthorizedException('Invalid vendor session');
   }
 
-  // 3. Check whether a refresh token is stored
+  //  Check whether a refresh token is stored
   if (!user.refreshTokenHash) {
     throw new UnauthorizedException('You are already logged out');
   }
 
-  // 4. Compare the received token with the stored hash
+  //  Compare the received token with the stored hash
   const isTokenValid = await bcrypt.compare(
     dto.refreshToken,
     user.refreshTokenHash,
@@ -359,7 +359,7 @@ export class AuthService {
     throw new UnauthorizedException('Invalid refresh token');
   }
 
-  // 5. Remove the refresh token hash
+  //  Remove the refresh token hash
   await this.prisma.user.update({
     where: {
       id: user.id,
@@ -372,6 +372,243 @@ export class AuthService {
   return {
     message: 'Vendor logged out successfully',
   };
+}
+
+
+  // Admin Login
+  async adminLogin(loginDto: LoginDto) {
+  const email = loginDto.email.trim().toLowerCase();
+
+  //  Find Admin account
+  const user = await this.prisma.user.findUnique({
+    where: { email },
+  });
+
+  //  Check account and password
+  if (!user || user.role !== 'ADMIN') {
+    throw new UnauthorizedException(
+      'Invalid email or password',
+    );
+  }
+
+  const isPasswordValid = await bcrypt.compare(
+    loginDto.password,
+    user.passwordHash,
+  );
+
+  if (!isPasswordValid) {
+    throw new UnauthorizedException(
+      'Invalid email or password',
+    );
+  }
+
+  //  Check whether Admin account is active
+  if (!user.isActive) {
+    throw new ForbiddenException(
+      'Your Admin account is inactive.',
+    );
+  }
+
+  //  Create JWT payload
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+  };
+
+  //  Generate access token
+  const accessToken = await this.jwtService.signAsync(
+    payload,
+    {
+      secret: process.env.JWT_ACCESS_SECRET,
+      expiresIn: '15m',
+    },
+  );
+
+  //  Generate refresh token
+  const refreshToken = await this.jwtService.signAsync(
+    payload,
+    {
+      secret: process.env.JWT_REFRESH_SECRET,
+      expiresIn: '7d',
+    },
+  );
+
+  //  Hash refresh token and save in database
+  const refreshTokenHash = await bcrypt.hash(
+    refreshToken,
+    10,
+  );
+
+  await this.prisma.user.update({
+    where: { id: user.id },
+    data: { refreshTokenHash },
+  });
+
+  //  Return tokens and safe user information
+  return {
+    message: 'Admin logged in successfully',
+
+    accessToken,
+    refreshToken,
+
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+    },
+  };
+}
+
+
+  // Admin refresh token
+  async refreshAdminToken(dto: RefreshTokenDto) {
+  try {
+    //  Verify refresh token
+    const payload = await this.jwtService.verifyAsync(
+      dto.refreshToken,
+      {
+        secret: process.env.JWT_REFRESH_SECRET,
+      },
+    );
+
+    //  Find Admin
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+
+    if (
+      !user ||
+      user.role !== 'ADMIN' ||
+      !user.isActive ||
+      !user.refreshTokenHash
+    ) {
+      throw new UnauthorizedException(
+        'Invalid refresh token',
+      );
+    }
+
+    //  Compare token with stored hash
+    const isTokenValid = await bcrypt.compare(
+      dto.refreshToken,
+      user.refreshTokenHash,
+    );
+
+    if (!isTokenValid) {
+      throw new UnauthorizedException(
+        'Refresh token is invalid or already used',
+      );
+    }
+
+    //  Create new payload
+    const newPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    };
+
+    //  Generate new tokens
+    const accessToken = await this.jwtService.signAsync(
+      newPayload,
+      {
+        secret: process.env.JWT_ACCESS_SECRET,
+        expiresIn: '15m',
+      },
+    );
+
+    const refreshToken = await this.jwtService.signAsync(
+      newPayload,
+      {
+        secret: process.env.JWT_REFRESH_SECRET,
+        expiresIn: '7d',
+      },
+    );
+
+    //  Save new refresh token hash
+    const refreshTokenHash = await bcrypt.hash(
+      refreshToken,
+      10,
+    );
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { refreshTokenHash },
+    });
+
+    return {
+      message: 'Admin tokens refreshed successfully',
+      accessToken,
+      refreshToken,
+    };
+  } catch (error) {
+    if (error instanceof UnauthorizedException) {
+      throw error;
+    }
+
+    throw new UnauthorizedException(
+      'Invalid or expired refresh token',
+    );
+  }
+}
+
+  //  Admin logout
+  async adminLogout(dto: RefreshTokenDto) {
+  try {
+    //  Verify refresh token
+    const payload = await this.jwtService.verifyAsync(
+      dto.refreshToken,
+      {
+        secret: process.env.JWT_REFRESH_SECRET,
+        ignoreExpiration: true,
+      },
+    );
+
+    //  Find Admin
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+
+    if (
+      !user ||
+      user.role !== 'ADMIN' ||
+      !user.refreshTokenHash
+    ) {
+      throw new UnauthorizedException(
+        'Invalid refresh token',
+      );
+    }
+
+    //  Compare refresh token
+    const isTokenValid = await bcrypt.compare(
+      dto.refreshToken,
+      user.refreshTokenHash,
+    );
+
+    if (!isTokenValid) {
+      throw new UnauthorizedException(
+        'Invalid refresh token',
+      );
+    }
+
+    //  Invalidate refresh token
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { refreshTokenHash: null },
+    });
+
+    return {
+      message: 'Admin logged out successfully',
+    };
+  } catch (error) {
+    if (error instanceof UnauthorizedException) {
+      throw error;
+    }
+
+    throw new UnauthorizedException(
+      'Invalid refresh token',
+    );
+  }
 }
 
 }
