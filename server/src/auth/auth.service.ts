@@ -16,7 +16,6 @@ export class AuthService {
   ) {}
 
   // register
-
   async registerVendor(dto: VendorRegisterDto) {
 
     const email = dto.email.trim().toLowerCase();
