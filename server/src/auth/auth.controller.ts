@@ -2,15 +2,19 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 
 import { AuthService } from './auth.service';
 import { VendorRegisterDto } from './dto/vendor-register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -53,6 +57,20 @@ export class AuthController {
   ) {
   return this.authService.vendorLogout(refreshTokenDto);
   }
+
+  @Get('vendor/protected')
+@UseGuards(JwtAuthGuard)
+vendorProtected(@Req() request: any) {
+  return {
+    message: 'You have successfully accessed a protected API',
+
+    user: {
+      id: request.user.sub,
+      email: request.user.email,
+      role: request.user.role,
+    },
+  };
+}
 
 
 }
